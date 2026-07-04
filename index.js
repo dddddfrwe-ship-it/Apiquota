@@ -9,7 +9,7 @@ const defaultSettings = {
   apiLabel: "default",
   knownLabels: ["default"],
   autoDeduct: true,
-  lastDeduction: null, // { amount, remaining, time } | null
+  creditEvents: {}, // { apiLabel: { type: 'manual'|'deduct', amount, remaining, time } }
 };
 
 function getSettings() {
@@ -73,6 +73,22 @@ function setCredits(value) {
   const settings = getSettings();
   settings.credits[apiKey()] = value;
   saveSettings();
+}
+
+function recordCreditEvent(type, amount, remaining) {
+  const settings = getSettings();
+  settings.creditEvents[apiKey()] = {
+    type,
+    amount,
+    remaining,
+    time: new Date().toLocaleTimeString(),
+  };
+  saveSettings();
+}
+
+function getCreditEvent() {
+  const settings = getSettings();
+  return settings.creditEvents[apiKey()] || null;
 }
 
 function calcRemaining() {
@@ -256,13 +272,30 @@ function renderLabelSelect() {
   $select.append(`<option value="__new__">+ เพิ่มชื่อใหม่...</option>`);
 }
 
+function renderCreditsDisplay() {
+  $("#qt-credits-value").text(`${getCredits().toLocaleString()} เครดิต`);
+
+  const $log = $("#qt-credits-log");
+  const event = getCreditEvent();
+  if (!event) {
+    $log.text("ยังไม่มีประวัติการเปลี่ยนแปลง");
+  } else if (event.type === "manual") {
+    $log.html(`บันทึกด้วยมือ ตอน ${event.time} — เหลือ ${event.remaining.toLocaleString()}`);
+  } else {
+    $log.html(`<span class="qt-deduction-amount">-${event.amount}</span> เครดิต (อัตโนมัติ) ตอน ${event.time} — เหลือ ${event.remaining.toLocaleString()}`);
+  }
+}
+
 function updateDisplay() {
   const settings = getSettings();
   renderLabelSelect();
-  const $creditsInput = $("#qt-credits-input");
-  if (!$creditsInput.is(":focus")) {
-    $creditsInput.val(getCredits());
+
+  // Don't touch the credits edit input while it's open/focused, so a
+  // background poll/refresh can't wipe an unsaved edit before Save is clicked.
+  if (!$("#qt-credits-edit-row").is(":visible")) {
+    renderCreditsDisplay();
   }
+
   $("#qt-autodeduct-checkbox").prop("checked", settings.autoDeduct);
   renderModelTable();
   renderActiveModelBox();
@@ -274,18 +307,10 @@ function updateDisplay() {
   } else {
     $result.text(`เล่นได้อีกประมาณ ${remaining.toLocaleString()} ข้อความ`);
   }
-
-  const $deduction = $("#qt-deduction-log");
-  if (settings.lastDeduction) {
-    const { amount, remaining: rem, time } = settings.lastDeduction;
-    $deduction.html(`<span class="qt-deduction-amount">-${amount}</span> เครดิต ตอน ${time} — คงเหลือ ${rem}`);
-  } else {
-    $deduction.text("ยังไม่มีการหักเครดิต");
-  }
 }
 
 function flashCredits() {
-  const $el = $("#qt-credits-input");
+  const $el = $("#qt-credits-value");
   $el.addClass("qt-flash");
   setTimeout(() => $el.removeClass("qt-flash"), 1200);
 }
@@ -297,12 +322,7 @@ function deductForOneMessage() {
 
   const newCredits = Math.max(0, getCredits() - cost);
   setCredits(newCredits);
-  settings.lastDeduction = {
-    amount: cost,
-    remaining: newCredits,
-    time: new Date().toLocaleTimeString(),
-  };
-  saveSettings();
+  recordCreditEvent("deduct", cost, newCredits);
   updateDisplay();
   flashCredits();
 }
@@ -346,12 +366,17 @@ const panelHtml = `
       </div>
 
       <div class="qt-section">
-        <label for="qt-credits-input">เครดิตคงเหลือ (ของ API นี้)</label>
-        <div class="qt-row">
+        <label>เครดิตคงเหลือ (ของ API นี้)</label>
+        <div id="qt-credits-display" class="qt-row qt-credits-display">
+          <span id="qt-credits-value" class="qt-credits-value"></span>
+          <button id="qt-credits-edit-btn" class="menu_button">แก้ไข</button>
+        </div>
+        <div id="qt-credits-edit-row" class="qt-row" style="display:none;">
           <input type="number" id="qt-credits-input" class="text_pole" min="0" step="0.01" placeholder="เช่น 500" />
           <button id="qt-credits-save" class="menu_button">บันทึก</button>
+          <button id="qt-credits-cancel" class="menu_button">ยกเลิก</button>
         </div>
-        <small id="qt-deduction-log" class="qt-hint"></small>
+        <small id="qt-credits-log" class="qt-hint"></small>
       </div>
 
       <div class="qt-section">
@@ -390,6 +415,18 @@ const panelHtml = `
 `;
 
 function bindPanelEvents() {
+  $("#qt-credits-edit-btn").off("click").on("click", function () {
+    $("#qt-credits-input").val(getCredits());
+    $("#qt-credits-display").hide();
+    $("#qt-credits-edit-row").show();
+    $("#qt-credits-input").trigger("focus").trigger("select");
+  });
+
+  $("#qt-credits-cancel").off("click").on("click", function () {
+    $("#qt-credits-edit-row").hide();
+    $("#qt-credits-display").show();
+  });
+
   $("#qt-credits-save").off("click").on("click", function () {
     const val = parseFloat($("#qt-credits-input").val());
     if (isNaN(val) || val < 0) {
@@ -397,6 +434,9 @@ function bindPanelEvents() {
       return;
     }
     setCredits(val);
+    recordCreditEvent("manual", null, val);
+    $("#qt-credits-edit-row").hide();
+    $("#qt-credits-display").show();
     updateDisplay();
     toastr.success("บันทึกเครดิตแล้ว");
   });

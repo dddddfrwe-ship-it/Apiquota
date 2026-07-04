@@ -45,8 +45,16 @@
   border: 1px dashed var(--SmartThemeBorderColor, #555);
   border-radius: 6px;
 }
-.quota-tracker-settings input.qt-flash {
+.quota-tracker-settings .qt-credits-display {
+  justify-content: space-between;
+}
+.quota-tracker-settings .qt-credits-value {
+  font-size: 1.1em;
+  font-weight: bold;
+}
+.quota-tracker-settings .qt-flash {
   animation: qt-flash-anim 1.2s ease-out;
+  border-radius: 4px;
 }
 @keyframes qt-flash-anim {
   0% { background-color: rgba(224, 96, 96, 0.6); }
