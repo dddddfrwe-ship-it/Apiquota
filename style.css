@@ -1,0 +1,37 @@
+.quota-tracker-settings .qt-section {
+  margin: 8px 0;
+}
+.quota-tracker-settings .qt-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.quota-tracker-settings .qt-row input {
+  flex: 1;
+  min-width: 100px;
+}
+.quota-tracker-settings .qt-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9em;
+}
+.quota-tracker-settings .qt-table th,
+.quota-tracker-settings .qt-table td {
+  border: 1px solid var(--SmartThemeBorderColor, #555);
+  padding: 4px 8px;
+  text-align: left;
+}
+.quota-tracker-settings .qt-checkbox-row label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.quota-tracker-settings .qt-remaining {
+  color: var(--SmartThemeQuoteColor, #7fdc7f);
+  margin: 4px 0;
+}
+.quota-tracker-settings .qt-log {
+  opacity: 0.7;
+  display: block;
+}
