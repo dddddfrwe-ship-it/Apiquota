@@ -108,7 +108,7 @@ function readModelFromDom() {
     const $custom = $("#custom_model_id");
     if ($custom.length && $custom.val()) val = $custom.val();
   }
-  return val || null;
+  return val ? String(val).trim() : null;
 }
 
 function findApiKeyInput() {
@@ -136,7 +136,7 @@ function detectApiLabel() {
   const $keyInput = findApiKeyInput();
   if ($keyInput) {
     const keyVal = $keyInput.val();
-    if (keyVal && keyVal.trim().length >= 6) {
+    if ($keyInput.is(":focus") && keyVal && keyVal.trim().length >= 6) {
       return `key:${keyVal.trim().slice(-6)}`;
     }
     const placeholder = $keyInput.attr("placeholder") || "";
@@ -241,8 +241,10 @@ function renderActiveModelBox() {
   const $box = $("#qt-active-model-box");
   if (!$box.length) return;
 
+  const debugLine = `<div class="qt-hint">API: "${escapeHtml(apiKey())}" | โมเดล: "${escapeHtml(settings.activeModel || "")}"</div>`;
+
   if (!settings.activeModel) {
-    $box.html(`<i>ยังไม่รู้จักโมเดลปัจจุบัน — ลองเลือก/พิมพ์โมเดลในช่องด้านบนอีกครั้ง</i>`);
+    $box.html(`<i>ยังไม่รู้จักโมเดลปัจจุบัน — ลองเลือก/พิมพ์โมเดลในช่องด้านบนอีกครั้ง</i>${debugLine}`);
     return;
   }
 
@@ -254,9 +256,10 @@ function renderActiveModelBox() {
         <input type="number" id="qt-quick-cost" class="text_pole" min="0" step="0.0001" placeholder="ค่าใช้จ่าย/ข้อความ" />
         <button id="qt-quick-cost-save" class="menu_button">บันทึกราคา</button>
       </div>
+      ${debugLine}
     `);
   } else {
-    $box.html(`โมเดลปัจจุบัน: <b>${escapeHtml(settings.activeModel)}</b> — ${cost} เครดิต/ข้อความ`);
+    $box.html(`โมเดลปัจจุบัน: <b>${escapeHtml(settings.activeModel)}</b> — ${cost} เครดิต/ข้อความ${debugLine}`);
   }
 }
 
