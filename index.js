@@ -418,19 +418,24 @@ const panelHtml = `
 `;
 
 function bindPanelEvents() {
-  $("#qt-credits-edit-btn").off("click").on("click", function () {
+  // All handlers use delegated binding off document (namespaced .qt) instead
+  // of binding straight to the element. This is bound once and keeps working
+  // even if ST re-renders #rm_api_block and our panel gets re-appended,
+  // which could otherwise leave click handlers attached to a detached/stale
+  // copy of a button while the visible one silently does nothing.
+  $(document).off("click.qt", "#qt-credits-edit-btn").on("click.qt", "#qt-credits-edit-btn", function () {
     $("#qt-credits-input").val(getCredits());
     $("#qt-credits-display").hide();
     $("#qt-credits-edit-row").show();
     $("#qt-credits-input").trigger("focus").trigger("select");
   });
 
-  $("#qt-credits-cancel").off("click").on("click", function () {
+  $(document).off("click.qt", "#qt-credits-cancel").on("click.qt", "#qt-credits-cancel", function () {
     $("#qt-credits-edit-row").hide();
     $("#qt-credits-display").show();
   });
 
-  $("#qt-credits-save").off("click").on("click", function () {
+  $(document).off("click.qt", "#qt-credits-save").on("click.qt", "#qt-credits-save", function () {
     const val = parseFloat($("#qt-credits-input").val());
     if (isNaN(val) || val < 0) {
       toastr.warning("กรอกจำนวนเครดิตให้ถูกต้องก่อน");
@@ -444,7 +449,7 @@ function bindPanelEvents() {
     toastr.success("บันทึกเครดิตแล้ว");
   });
 
-  $("#qt-api-label-select").off("change").on("change", function () {
+  $(document).off("change.qt", "#qt-api-label-select").on("change.qt", "#qt-api-label-select", function () {
     const val = $(this).val();
     if (val === "__new__") {
       $("#qt-api-new-row").show();
@@ -456,7 +461,7 @@ function bindPanelEvents() {
     switchToLabel(val);
   });
 
-  $("#qt-api-label-save").off("click").on("click", function () {
+  $(document).off("click.qt", "#qt-api-label-save").on("click.qt", "#qt-api-label-save", function () {
     const val = $("#qt-api-label-input").val().trim();
     if (!val) {
       toastr.warning("กรอกชื่อ API ก่อน");
@@ -468,7 +473,7 @@ function bindPanelEvents() {
     toastr.success("เพิ่มแล้ว");
   });
 
-  $("#qt-api-label-delete").off("click").on("click", function () {
+  $(document).off("click.qt", "#qt-api-label-delete").on("click.qt", "#qt-api-label-delete", function () {
     const settings = getSettings();
     const current = apiKey();
     if (current === "default") {
@@ -483,7 +488,7 @@ function bindPanelEvents() {
     updateDisplay();
   });
 
-  $("#qt-add-model").off("click").on("click", function () {
+  $(document).off("click.qt", "#qt-add-model").on("click.qt", "#qt-add-model", function () {
     const name = $("#qt-new-model-name").val().trim();
     const cost = parseFloat($("#qt-new-model-cost").val());
     if (!name || isNaN(cost) || cost < 0) {
@@ -499,14 +504,14 @@ function bindPanelEvents() {
     updateDisplay();
   });
 
-  $(document).off("click", ".qt-delete-model").on("click", ".qt-delete-model", function () {
+  $(document).off("click.qt", ".qt-delete-model").on("click.qt", ".qt-delete-model", function () {
     const name = $(this).data("model");
     delete getModelCosts()[name];
     saveSettings();
     updateDisplay();
   });
 
-  $(document).off("click", "#qt-quick-cost-save").on("click", "#qt-quick-cost-save", function () {
+  $(document).off("click.qt", "#qt-quick-cost-save").on("click.qt", "#qt-quick-cost-save", function () {
     const cost = parseFloat($("#qt-quick-cost").val());
     if (isNaN(cost) || cost < 0) {
       toastr.warning("กรอกราคาให้ถูกต้องก่อน");
@@ -518,7 +523,7 @@ function bindPanelEvents() {
     updateDisplay();
   });
 
-  $("#qt-autodeduct-checkbox").off("change").on("change", function () {
+  $(document).off("change.qt", "#qt-autodeduct-checkbox").on("change.qt", "#qt-autodeduct-checkbox", function () {
     const settings = getSettings();
     settings.autoDeduct = $(this).prop("checked");
     saveSettings();
