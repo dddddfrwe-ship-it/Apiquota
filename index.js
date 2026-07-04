@@ -89,8 +89,14 @@ function readModelFromDom() {
 }
 
 function findApiKeyInput() {
-  const $candidates = $('input[id*="api_key" i]:visible');
-  return $candidates.length ? $candidates.first() : null;
+  let found = null;
+  $("input:visible").each(function () {
+    const id = (this.id || "").toLowerCase();
+    if (!found && id.includes("api_key")) {
+      found = $(this);
+    }
+  });
+  return found;
 }
 
 // Returns a label based on whatever we can currently see in the UI.
@@ -125,18 +131,26 @@ function detectApiLabel() {
 }
 
 function syncApiContext() {
-  const detected = detectApiLabel();
-  if (detected) switchToLabel(detected);
+  try {
+    const detected = detectApiLabel();
+    if (detected) switchToLabel(detected);
+  } catch (e) {
+    console.error("[QuotaTracker] Error in syncApiContext", e);
+  }
 
   // ST may repopulate the model dropdown asynchronously after switching
   // API/profile/key, so re-check shortly after instead of only reacting
   // to a 'change' event that may never fire on a programmatic update.
   setTimeout(() => {
-    const val = readModelFromDom();
-    if (val && getSettings().activeModel !== val) {
-      getSettings().activeModel = val;
-      saveSettings();
-      updateDisplay();
+    try {
+      const val = readModelFromDom();
+      if (val && getSettings().activeModel !== val) {
+        getSettings().activeModel = val;
+        saveSettings();
+        updateDisplay();
+      }
+    } catch (e) {
+      console.error("[QuotaTracker] Error refreshing model after API change", e);
     }
   }, 400);
 }
@@ -439,8 +453,8 @@ function bindPanelEvents() {
     .off("change.qt", "#connection_profiles, #chat_completion_source, #custom_api_url_text")
     .on("change.qt", "#connection_profiles, #chat_completion_source, #custom_api_url_text", syncApiContext);
   $(document)
-    .off("input.qt change.qt", 'input[id*="api_key" i]')
-    .on("input.qt change.qt", 'input[id*="api_key" i]', syncApiContext);
+    .off("input.qt change.qt", 'input[id*="api_key"]')
+    .on("input.qt change.qt", 'input[id*="api_key"]', syncApiContext);
 }
 
 function injectPanel(container) {
@@ -466,13 +480,17 @@ function tryInject(retries = 20) {
 jQuery(async () => {
   getSettings();
 
-  const detectedModel = readModelFromDom();
-  if (detectedModel) getSettings().activeModel = detectedModel;
+  try {
+    const detectedModel = readModelFromDom();
+    if (detectedModel) getSettings().activeModel = detectedModel;
 
-  const detectedApi = detectApiLabel();
-  if (detectedApi) {
-    addKnownLabel(detectedApi);
-    getSettings().apiLabel = detectedApi;
+    const detectedApi = detectApiLabel();
+    if (detectedApi) {
+      addKnownLabel(detectedApi);
+      getSettings().apiLabel = detectedApi;
+    }
+  } catch (e) {
+    console.error("[QuotaTracker] Error during initial detection", e);
   }
 
   tryInject();
