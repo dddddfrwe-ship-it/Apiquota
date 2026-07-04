@@ -3,10 +3,11 @@ import { saveSettingsDebounced, eventSource, event_types } from "../../../../scr
 
 const extensionName = "quota-tracker";
 const defaultSettings = {
-  credits: {},      // { apiLabel: number }
-  modelCosts: {},   // { modelName: costPerMessage }
+  credits: {},       // { apiLabel: number }
+  modelCosts: {},    // { modelName: costPerMessage }
   activeModel: "",
   apiLabel: "default",
+  knownLabels: ["default"],
   autoDeduct: true,
   lastDeduction: null, // { amount, remaining, time } | null
 };
@@ -40,6 +41,22 @@ function apiKey() {
   return settings.apiLabel || "default";
 }
 
+function addKnownLabel(label) {
+  const settings = getSettings();
+  if (!settings.knownLabels.includes(label)) {
+    settings.knownLabels.push(label);
+    saveSettings();
+  }
+}
+
+function switchToLabel(label) {
+  const settings = getSettings();
+  addKnownLabel(label);
+  settings.apiLabel = label;
+  saveSettings();
+  updateDisplay();
+}
+
 function getCredits() {
   const settings = getSettings();
   return settings.credits[apiKey()] || 0;
@@ -71,8 +88,18 @@ function readModelFromDom() {
   return val || null;
 }
 
+function findApiKeyInput() {
+  const $candidates = $('input[id*="api_key" i]:visible');
+  return $candidates.length ? $candidates.first() : null;
+}
+
+// Returns a label based on whatever we can currently see in the UI.
+// Priority: named Connection Profile > freshly typed API key (last 6 chars,
+// never the full key) > source + base URL.
+// Note: once a key is saved, ST hides its real value behind a placeholder,
+// so this can only "see" a key while it's actively being typed/pasted in.
+// For already-saved keys, use the dropdown in the panel to switch manually.
 function detectApiLabel() {
-  // Prefer a named connection profile if one is actually selected.
   const $profileSel = $("#connection_profiles");
   if ($profileSel.length) {
     const text = $profileSel.find("option:selected").text().trim();
@@ -80,29 +107,38 @@ function detectApiLabel() {
       return text;
     }
   }
-  // Otherwise fall back to source + custom base URL. This covers manually
-  // switching between endpoints/providers (different "shops") without ever
-  // creating a named connection profile.
+
   const source = $("#chat_completion_source").length ? $("#chat_completion_source").val() : null;
   const baseUrl = $("#custom_api_url_text").length ? $("#custom_api_url_text").val() : null;
+
+  const $keyInput = findApiKeyInput();
+  const keyVal = $keyInput ? $keyInput.val() : "";
+  if (keyVal && keyVal.trim().length >= 6) {
+    const suffix = keyVal.trim().slice(-6);
+    return `${source || "custom"} · key:${suffix}`;
+  }
+
   if (source) {
     return baseUrl ? `${source} · ${baseUrl}` : source;
   }
   return null;
 }
 
-// Switches the whole panel (credits, deduction log) over to whichever
-// API/profile is currently active in ST's own UI. Runs automatically,
-// no confirmation needed, since a different API is effectively a
-// different "shop" with its own separate credit balance.
-function syncApiLabel() {
+function syncApiContext() {
   const detected = detectApiLabel();
-  if (!detected) return;
-  const settings = getSettings();
-  if (settings.apiLabel === detected) return;
-  settings.apiLabel = detected;
-  saveSettings();
-  updateDisplay();
+  if (detected) switchToLabel(detected);
+
+  // ST may repopulate the model dropdown asynchronously after switching
+  // API/profile/key, so re-check shortly after instead of only reacting
+  // to a 'change' event that may never fire on a programmatic update.
+  setTimeout(() => {
+    const val = readModelFromDom();
+    if (val && getSettings().activeModel !== val) {
+      getSettings().activeModel = val;
+      saveSettings();
+      updateDisplay();
+    }
+  }, 400);
 }
 
 function onModelChanged() {
@@ -157,9 +193,21 @@ function renderActiveModelBox() {
   }
 }
 
+function renderLabelSelect() {
+  const settings = getSettings();
+  const $select = $("#qt-api-label-select");
+  if (!$select.length) return;
+  $select.empty();
+  for (const label of settings.knownLabels) {
+    const selected = label === apiKey() ? "selected" : "";
+    $select.append(`<option value="${escapeHtml(label)}" ${selected}>${escapeHtml(label)}</option>`);
+  }
+  $select.append(`<option value="__new__">+ เพิ่มชื่อใหม่...</option>`);
+}
+
 function updateDisplay() {
   const settings = getSettings();
-  $("#qt-api-label-input").val(apiKey());
+  renderLabelSelect();
   $("#qt-credits-input").val(getCredits());
   $("#qt-autodeduct-checkbox").prop("checked", settings.autoDeduct);
   renderModelTable();
@@ -231,11 +279,16 @@ const panelHtml = `
     <div class="inline-drawer-content">
 
       <div class="qt-section">
-        <label for="qt-api-label-input">API/บัญชีปัจจุบัน (สลับอัตโนมัติตามที่เลือกด้านบน)</label>
+        <label for="qt-api-label-select">API/บัญชีปัจจุบัน</label>
         <div class="qt-row">
-          <input type="text" id="qt-api-label-input" class="text_pole" placeholder="เช่น gemai-claude" />
-          <button id="qt-api-label-save" class="menu_button">เปลี่ยนชื่อ</button>
+          <select id="qt-api-label-select" class="text_pole"></select>
+          <button id="qt-api-label-delete" class="menu_button" title="ลบชื่อนี้ออกจากรายการ">ลบ</button>
         </div>
+        <div id="qt-api-new-row" class="qt-row" style="display:none;">
+          <input type="text" id="qt-api-label-input" class="text_pole" placeholder="ชื่อ API ใหม่ เช่น gemai-claude" />
+          <button id="qt-api-label-save" class="menu_button">เพิ่ม</button>
+        </div>
+        <small class="qt-hint">พิมพ์/วางคีย์ใหม่ในช่อง API Key จะเพิ่มเข้ารายการนี้ให้เองอัตโนมัติ ถ้าเป็นคีย์เก่าที่บันทึกไว้แล้ว เลือกจากดรอปดาวน์นี้แทนได้เลย</small>
       </div>
 
       <div class="qt-section">
@@ -294,18 +347,41 @@ function bindPanelEvents() {
     toastr.success("บันทึกเครดิตแล้ว");
   });
 
-  // Manual rename is still available in case auto-detection guesses wrong,
-  // but switching API in ST's own UI will override this automatically.
+  $("#qt-api-label-select").off("change").on("change", function () {
+    const val = $(this).val();
+    if (val === "__new__") {
+      $("#qt-api-new-row").show();
+      $("#qt-api-label-input").val("").trigger("focus");
+      return;
+    }
+    $("#qt-api-new-row").hide();
+    switchToLabel(val);
+  });
+
   $("#qt-api-label-save").off("click").on("click", function () {
     const val = $("#qt-api-label-input").val().trim();
     if (!val) {
       toastr.warning("กรอกชื่อ API ก่อน");
       return;
     }
-    getSettings().apiLabel = val;
+    $("#qt-api-new-row").hide();
+    switchToLabel(val);
+    toastr.success("เพิ่มแล้ว");
+  });
+
+  $("#qt-api-label-delete").off("click").on("click", function () {
+    const settings = getSettings();
+    const current = apiKey();
+    if (current === "default") {
+      toastr.warning("ลบชื่อ default ไม่ได้");
+      return;
+    }
+    if (!confirm(`ลบ "${current}" ออกจากรายการ? (เครดิตของชื่อนี้จะหายไปด้วย)`)) return;
+    settings.knownLabels = settings.knownLabels.filter((l) => l !== current);
+    delete settings.credits[current];
+    settings.apiLabel = "default";
     saveSettings();
     updateDisplay();
-    toastr.success("เปลี่ยนชื่อแล้ว");
   });
 
   $("#qt-add-model").off("click").on("click", function () {
@@ -350,8 +426,8 @@ function bindPanelEvents() {
     saveSettings();
   });
 
-  // Best-effort sync with ST's own model pickers / API source / profile
-  // controls. These fire automatically and switch the whole panel over
+  // Best-effort sync with ST's own model pickers / API source / profile /
+  // key controls. These fire automatically and switch the whole panel over
   // (credits + deduction log) with no confirmation needed.
   $(document)
     .off("change.qt", 'select[id^="model_"][id$="_select"]')
@@ -361,7 +437,10 @@ function bindPanelEvents() {
     .on("input.qt change.qt", "#custom_model_id", onModelChanged);
   $(document)
     .off("change.qt", "#connection_profiles, #chat_completion_source, #custom_api_url_text")
-    .on("change.qt", "#connection_profiles, #chat_completion_source, #custom_api_url_text", syncApiLabel);
+    .on("change.qt", "#connection_profiles, #chat_completion_source, #custom_api_url_text", syncApiContext);
+  $(document)
+    .off("input.qt change.qt", 'input[id*="api_key" i]')
+    .on("input.qt change.qt", 'input[id*="api_key" i]', syncApiContext);
 }
 
 function injectPanel(container) {
@@ -391,7 +470,10 @@ jQuery(async () => {
   if (detectedModel) getSettings().activeModel = detectedModel;
 
   const detectedApi = detectApiLabel();
-  if (detectedApi) getSettings().apiLabel = detectedApi;
+  if (detectedApi) {
+    addKnownLabel(detectedApi);
+    getSettings().apiLabel = detectedApi;
+  }
 
   tryInject();
 
