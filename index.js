@@ -100,12 +100,29 @@ function findApiKeyInput() {
 }
 
 // Returns a label based on whatever we can currently see in the UI.
-// Priority: named Connection Profile > freshly typed API key (last 6 chars,
-// never the full key) > source + base URL.
-// Note: once a key is saved, ST hides its real value behind a placeholder,
-// so this can only "see" a key while it's actively being typed/pasted in.
-// For already-saved keys, use the dropdown in the panel to switch manually.
+// Priority:
+//   1. A key currently being typed/pasted (last 6 chars, never the full key)
+//   2. The active secret's name from ST's own Secrets Manager, read off the
+//      key field's placeholder text, e.g. "บันทึก API Key แล้ว (Claude)" -> "Claude"
+//   3. A named Connection Profile
+//   4. Chat completion source + custom base URL
+// Note: a saved key's real value is hidden by ST, so #1 only works for a
+// key that hasn't been saved yet. Once saved, #2 (the Secrets Manager name)
+// is the reliable source, since ST shows which saved secret is active.
 function detectApiLabel() {
+  const $keyInput = findApiKeyInput();
+  if ($keyInput) {
+    const keyVal = $keyInput.val();
+    if (keyVal && keyVal.trim().length >= 6) {
+      return `key:${keyVal.trim().slice(-6)}`;
+    }
+    const placeholder = $keyInput.attr("placeholder") || "";
+    const match = placeholder.match(/\(([^)]+)\)/);
+    if (match && match[1].trim()) {
+      return match[1].trim();
+    }
+  }
+
   const $profileSel = $("#connection_profiles");
   if ($profileSel.length) {
     const text = $profileSel.find("option:selected").text().trim();
@@ -116,14 +133,6 @@ function detectApiLabel() {
 
   const source = $("#chat_completion_source").length ? $("#chat_completion_source").val() : null;
   const baseUrl = $("#custom_api_url_text").length ? $("#custom_api_url_text").val() : null;
-
-  const $keyInput = findApiKeyInput();
-  const keyVal = $keyInput ? $keyInput.val() : "";
-  if (keyVal && keyVal.trim().length >= 6) {
-    const suffix = keyVal.trim().slice(-6);
-    return `${source || "custom"} · key:${suffix}`;
-  }
-
   if (source) {
     return baseUrl ? `${source} · ${baseUrl}` : source;
   }
@@ -153,6 +162,28 @@ function syncApiContext() {
       console.error("[QuotaTracker] Error refreshing model after API change", e);
     }
   }, 400);
+}
+
+let lastPolledApiLabel = null;
+
+function pollApiLabel() {
+  try {
+    const detected = detectApiLabel();
+    if (detected && detected !== lastPolledApiLabel) {
+      lastPolledApiLabel = detected;
+      switchToLabel(detected);
+      setTimeout(() => {
+        const val = readModelFromDom();
+        if (val && getSettings().activeModel !== val) {
+          getSettings().activeModel = val;
+          saveSettings();
+          updateDisplay();
+        }
+      }, 400);
+    }
+  } catch (e) {
+    console.error("[QuotaTracker] Error polling API label", e);
+  }
 }
 
 function onModelChanged() {
@@ -369,6 +400,7 @@ function bindPanelEvents() {
       return;
     }
     $("#qt-api-new-row").hide();
+    lastPolledApiLabel = val;
     switchToLabel(val);
   });
 
@@ -379,6 +411,7 @@ function bindPanelEvents() {
       return;
     }
     $("#qt-api-new-row").hide();
+    lastPolledApiLabel = val;
     switchToLabel(val);
     toastr.success("เพิ่มแล้ว");
   });
@@ -488,12 +521,14 @@ jQuery(async () => {
     if (detectedApi) {
       addKnownLabel(detectedApi);
       getSettings().apiLabel = detectedApi;
+      lastPolledApiLabel = detectedApi;
     }
   } catch (e) {
     console.error("[QuotaTracker] Error during initial detection", e);
   }
 
   tryInject();
+  setInterval(pollApiLabel, 1500);
 
   eventSource.on(event_types.MESSAGE_RECEIVED, onMessageReceived);
 });
