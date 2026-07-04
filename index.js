@@ -3,12 +3,12 @@ import { saveSettingsDebounced, eventSource, event_types } from "../../../../scr
 
 const extensionName = "quota-tracker";
 const defaultSettings = {
-  credits: {},      // { profileKey: number }
+  credits: {},      // { apiLabel: number }
   modelCosts: {},   // { modelName: costPerMessage }
   activeModel: "",
-  currentProfile: "default",
+  apiLabel: "default",
   autoDeduct: true,
-  lastAction: "",
+  lastDeduction: null, // { amount, remaining, time } | null
 };
 
 function getSettings() {
@@ -35,21 +35,19 @@ function escapeHtml(str) {
     .replaceAll('"', "&quot;");
 }
 
-function profileKey() {
+function apiKey() {
   const settings = getSettings();
-  return settings.currentProfile || "default";
+  return settings.apiLabel || "default";
 }
 
 function getCredits() {
   const settings = getSettings();
-  const key = profileKey();
-  return settings.credits[key] || 0;
+  return settings.credits[apiKey()] || 0;
 }
 
 function setCredits(value) {
   const settings = getSettings();
-  const key = profileKey();
-  settings.credits[key] = value;
+  settings.credits[apiKey()] = value;
   saveSettings();
 }
 
@@ -60,7 +58,7 @@ function calcRemaining() {
   return Math.floor(getCredits() / cost);
 }
 
-// ---- Detect current model from the native ST UI (best-effort) ----
+// ---- Best-effort detection of the active model / API from the native ST UI ----
 function readModelFromDom() {
   let val = null;
   $('select[id^="model_"][id$="_select"]:visible').each(function () {
@@ -73,14 +71,38 @@ function readModelFromDom() {
   return val || null;
 }
 
-function readProfileFromDom() {
-  const $sel = $("#connection_profiles");
-  if ($sel.length) {
-    const text = $sel.find("option:selected").text().trim();
-    const val = $sel.val();
-    return text || val || null;
+function detectApiLabel() {
+  // Prefer a named connection profile if one is actually selected.
+  const $profileSel = $("#connection_profiles");
+  if ($profileSel.length) {
+    const text = $profileSel.find("option:selected").text().trim();
+    if (text && text !== "<None>" && text.toLowerCase() !== "none") {
+      return text;
+    }
+  }
+  // Otherwise fall back to source + custom base URL. This covers manually
+  // switching between endpoints/providers (different "shops") without ever
+  // creating a named connection profile.
+  const source = $("#chat_completion_source").length ? $("#chat_completion_source").val() : null;
+  const baseUrl = $("#custom_api_url_text").length ? $("#custom_api_url_text").val() : null;
+  if (source) {
+    return baseUrl ? `${source} · ${baseUrl}` : source;
   }
   return null;
+}
+
+// Switches the whole panel (credits, deduction log) over to whichever
+// API/profile is currently active in ST's own UI. Runs automatically,
+// no confirmation needed, since a different API is effectively a
+// different "shop" with its own separate credit balance.
+function syncApiLabel() {
+  const detected = detectApiLabel();
+  if (!detected) return;
+  const settings = getSettings();
+  if (settings.apiLabel === detected) return;
+  settings.apiLabel = detected;
+  saveSettings();
+  updateDisplay();
 }
 
 function onModelChanged() {
@@ -89,17 +111,6 @@ function onModelChanged() {
   const settings = getSettings();
   if (settings.activeModel === val) return;
   settings.activeModel = val;
-  saveSettings();
-  updateDisplay();
-}
-
-function onProfileEvent(data) {
-  let name = null;
-  if (typeof data === "string") name = data;
-  else if (data && typeof data === "object") name = data.name || data.id || null;
-  if (!name) name = readProfileFromDom();
-  const settings = getSettings();
-  settings.currentProfile = name || "default";
   saveSettings();
   updateDisplay();
 }
@@ -148,7 +159,7 @@ function renderActiveModelBox() {
 
 function updateDisplay() {
   const settings = getSettings();
-  $("#qt-profile-name").text(profileKey());
+  $("#qt-api-label-input").val(apiKey());
   $("#qt-credits-input").val(getCredits());
   $("#qt-autodeduct-checkbox").prop("checked", settings.autoDeduct);
   renderModelTable();
@@ -162,23 +173,36 @@ function updateDisplay() {
     $result.text(`เล่นได้อีกประมาณ ${remaining.toLocaleString()} ข้อความ`);
   }
 
-  $("#qt-log").text(settings.lastAction || "");
+  const $deduction = $("#qt-deduction-log");
+  if (settings.lastDeduction) {
+    const { amount, remaining: rem, time } = settings.lastDeduction;
+    $deduction.html(`<span class="qt-deduction-amount">-${amount}</span> เครดิต ตอน ${time} — คงเหลือ ${rem}`);
+  } else {
+    $deduction.text("ยังไม่มีการหักเครดิต");
+  }
 }
 
-function deductForOneMessage(reason = "AI ตอบกลับสำเร็จ") {
+function flashCredits() {
+  const $el = $("#qt-credits-input");
+  $el.addClass("qt-flash");
+  setTimeout(() => $el.removeClass("qt-flash"), 1200);
+}
+
+function deductForOneMessage() {
   const settings = getSettings();
   const cost = settings.modelCosts[settings.activeModel];
-  if (!settings.activeModel || !cost || cost <= 0) {
-    settings.lastAction = `ไม่ได้หัก (ยังไม่ได้ตั้งค่าโมเดล/ราคา) — ${new Date().toLocaleTimeString()}`;
-    saveSettings();
-    updateDisplay();
-    return;
-  }
-  const current = getCredits();
-  setCredits(Math.max(0, current - cost));
-  settings.lastAction = `หัก ${cost} เครดิต (${reason}) — เหลือ ${getCredits()} — ${new Date().toLocaleTimeString()}`;
+  if (!settings.activeModel || !cost || cost <= 0) return;
+
+  const newCredits = Math.max(0, getCredits() - cost);
+  setCredits(newCredits);
+  settings.lastDeduction = {
+    amount: cost,
+    remaining: newCredits,
+    time: new Date().toLocaleTimeString(),
+  };
   saveSettings();
   updateDisplay();
+  flashCredits();
 }
 
 // Only fires when a character/AI message is actually added to the chat.
@@ -191,7 +215,7 @@ function onMessageReceived(mesId) {
     const context = getContext();
     const message = context.chat[mesId];
     if (!message || message.is_user || message.is_system) return;
-    deductForOneMessage("AI ตอบกลับสำเร็จ");
+    deductForOneMessage();
   } catch (e) {
     console.error("[QuotaTracker] Error in onMessageReceived", e);
   }
@@ -201,13 +225,26 @@ const panelHtml = `
 <div id="quota-tracker-panel" class="quota-tracker-settings">
   <div class="inline-drawer">
     <div class="inline-drawer-toggle inline-drawer-header">
-      <b>📊 Quota Tracker — <span id="qt-profile-name">default</span></b>
+      <b>Quota Tracker</b>
       <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
     </div>
     <div class="inline-drawer-content">
+
       <div class="qt-section">
-        <label for="qt-credits-input">เครดิตคงเหลือ (ของโปรไฟล์นี้)</label>
-        <input type="number" id="qt-credits-input" class="text_pole" min="0" step="0.01" placeholder="เช่น 500" />
+        <label for="qt-api-label-input">API/บัญชีปัจจุบัน (สลับอัตโนมัติตามที่เลือกด้านบน)</label>
+        <div class="qt-row">
+          <input type="text" id="qt-api-label-input" class="text_pole" placeholder="เช่น gemai-claude" />
+          <button id="qt-api-label-save" class="menu_button">เปลี่ยนชื่อ</button>
+        </div>
+      </div>
+
+      <div class="qt-section">
+        <label for="qt-credits-input">เครดิตคงเหลือ (ของ API นี้)</label>
+        <div class="qt-row">
+          <input type="number" id="qt-credits-input" class="text_pole" min="0" step="0.01" placeholder="เช่น 500" />
+          <button id="qt-credits-save" class="menu_button">บันทึก</button>
+        </div>
+        <small id="qt-deduction-log" class="qt-hint"></small>
       </div>
 
       <div class="qt-section">
@@ -237,14 +274,8 @@ const panelHtml = `
         </label>
       </div>
 
-      <div class="qt-section qt-row">
-        <button id="qt-manual-deduct" class="menu_button">หักมือ 1 ข้อความ</button>
-        <button id="qt-reset" class="menu_button">รีเซ็ตทั้งหมด</button>
-      </div>
-
       <div class="qt-section">
         <h4 id="qt-remaining-display" class="qt-remaining"></h4>
-        <small id="qt-log" class="qt-log"></small>
       </div>
     </div>
   </div>
@@ -252,9 +283,29 @@ const panelHtml = `
 `;
 
 function bindPanelEvents() {
-  $("#qt-credits-input").off("input").on("input", function () {
-    setCredits(parseFloat($(this).val()) || 0);
+  $("#qt-credits-save").off("click").on("click", function () {
+    const val = parseFloat($("#qt-credits-input").val());
+    if (isNaN(val) || val < 0) {
+      toastr.warning("กรอกจำนวนเครดิตให้ถูกต้องก่อน");
+      return;
+    }
+    setCredits(val);
     updateDisplay();
+    toastr.success("บันทึกเครดิตแล้ว");
+  });
+
+  // Manual rename is still available in case auto-detection guesses wrong,
+  // but switching API in ST's own UI will override this automatically.
+  $("#qt-api-label-save").off("click").on("click", function () {
+    const val = $("#qt-api-label-input").val().trim();
+    if (!val) {
+      toastr.warning("กรอกชื่อ API ก่อน");
+      return;
+    }
+    getSettings().apiLabel = val;
+    saveSettings();
+    updateDisplay();
+    toastr.success("เปลี่ยนชื่อแล้ว");
   });
 
   $("#qt-add-model").off("click").on("click", function () {
@@ -297,21 +348,11 @@ function bindPanelEvents() {
     const settings = getSettings();
     settings.autoDeduct = $(this).prop("checked");
     saveSettings();
-    updateDisplay();
   });
 
-  $("#qt-manual-deduct").off("click").on("click", function () {
-    deductForOneMessage("หักมือ");
-  });
-
-  $("#qt-reset").off("click").on("click", function () {
-    if (!confirm("รีเซ็ตเครดิตและรายการโมเดลทั้งหมด?")) return;
-    extension_settings[extensionName] = structuredClone(defaultSettings);
-    saveSettings();
-    updateDisplay();
-  });
-
-  // Best-effort sync with ST's own model pickers / connection profile select.
+  // Best-effort sync with ST's own model pickers / API source / profile
+  // controls. These fire automatically and switch the whole panel over
+  // (credits + deduction log) with no confirmation needed.
   $(document)
     .off("change.qt", 'select[id^="model_"][id$="_select"]')
     .on("change.qt", 'select[id^="model_"][id$="_select"]', onModelChanged);
@@ -319,10 +360,8 @@ function bindPanelEvents() {
     .off("input.qt change.qt", "#custom_model_id")
     .on("input.qt change.qt", "#custom_model_id", onModelChanged);
   $(document)
-    .off("change.qt", "#connection_profiles")
-    .on("change.qt", "#connection_profiles", function () {
-      onProfileEvent(readProfileFromDom());
-    });
+    .off("change.qt", "#connection_profiles, #chat_completion_source, #custom_api_url_text")
+    .on("change.qt", "#connection_profiles, #chat_completion_source, #custom_api_url_text", syncApiLabel);
 }
 
 function injectPanel(container) {
@@ -340,8 +379,6 @@ function tryInject(retries = 20) {
   } else if (retries > 0) {
     setTimeout(() => tryInject(retries - 1), 500);
   } else {
-    // Fallback: nothing found after ~10s, attach at end of body
-    // so the feature is still usable and visible instead of silently failing.
     console.warn("[QuotaTracker] Could not find #rm_api_block, falling back to <body>.");
     injectPanel(document.body);
   }
@@ -349,15 +386,14 @@ function tryInject(retries = 20) {
 
 jQuery(async () => {
   getSettings();
-  const detectedProfile = readProfileFromDom();
-  if (detectedProfile) getSettings().currentProfile = detectedProfile;
+
   const detectedModel = readModelFromDom();
   if (detectedModel) getSettings().activeModel = detectedModel;
+
+  const detectedApi = detectApiLabel();
+  if (detectedApi) getSettings().apiLabel = detectedApi;
 
   tryInject();
 
   eventSource.on(event_types.MESSAGE_RECEIVED, onMessageReceived);
-  if (event_types.CONNECTION_PROFILE_LOADED) {
-    eventSource.on(event_types.CONNECTION_PROFILE_LOADED, onProfileEvent);
-  }
 });
