@@ -436,6 +436,7 @@ function bindPanelEvents() {
   });
 
   $(document).off("click.qt", "#qt-credits-save").on("click.qt", "#qt-credits-save", function () {
+    alert("DEBUG: qt-credits-save clicked, input value = " + $("#qt-credits-input").val());
     const val = parseFloat($("#qt-credits-input").val());
     if (isNaN(val) || val < 0) {
       toastr.warning("กรอกจำนวนเครดิตให้ถูกต้องก่อน");
