@@ -437,17 +437,22 @@ function bindPanelEvents() {
 
   $(document).off("click.qt", "#qt-credits-save").on("click.qt", "#qt-credits-save", function () {
     alert("DEBUG: qt-credits-save clicked, input value = " + $("#qt-credits-input").val());
-    const val = parseFloat($("#qt-credits-input").val());
-    if (isNaN(val) || val < 0) {
-      toastr.warning("กรอกจำนวนเครดิตให้ถูกต้องก่อน");
-      return;
+    try {
+      const val = parseFloat($("#qt-credits-input").val());
+      if (isNaN(val) || val < 0) {
+        toastr.warning("กรอกจำนวนเครดิตให้ถูกต้องก่อน");
+        return;
+      }
+      setCredits(val);
+      recordCreditEvent("manual", null, val);
+      $("#qt-credits-edit-row").hide();
+      $("#qt-credits-display").show();
+      updateDisplay();
+      alert("DEBUG: save finished OK, credits now = " + getCredits());
+      toastr.success("บันทึกเครดิตแล้ว");
+    } catch (e) {
+      alert("DEBUG ERROR: " + e.message + "\n" + e.stack);
     }
-    setCredits(val);
-    recordCreditEvent("manual", null, val);
-    $("#qt-credits-edit-row").hide();
-    $("#qt-credits-display").show();
-    updateDisplay();
-    toastr.success("บันทึกเครดิตแล้ว");
   });
 
   $(document).off("change.qt", "#qt-api-label-select").on("change.qt", "#qt-api-label-select", function () {
