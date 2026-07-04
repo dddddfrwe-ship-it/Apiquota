@@ -35,3 +35,13 @@
   opacity: 0.7;
   display: block;
 }
+.quota-tracker-settings .qt-active-model-box {
+  padding: 6px 10px;
+  border: 1px dashed var(--SmartThemeBorderColor, #555);
+  border-radius: 6px;
+}
+#quota-tracker-panel {
+  margin-top: 15px;
+  border-top: 1px solid var(--SmartThemeBorderColor, #555);
+  padding-top: 10px;
+}
