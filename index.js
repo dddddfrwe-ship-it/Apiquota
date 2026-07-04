@@ -4,7 +4,7 @@ import { saveSettingsDebounced, eventSource, event_types } from "../../../../scr
 const extensionName = "quota-tracker";
 const defaultSettings = {
   credits: {},       // { apiLabel: number }
-  modelCosts: {},    // { modelName: costPerMessage }
+  modelCosts: {},    // { apiLabel: { modelName: costPerMessage } }
   activeModel: "",
   apiLabel: "default",
   knownLabels: ["default"],
@@ -41,6 +41,13 @@ function apiKey() {
   return settings.apiLabel || "default";
 }
 
+function getModelCosts() {
+  const settings = getSettings();
+  const key = apiKey();
+  if (!settings.modelCosts[key]) settings.modelCosts[key] = {};
+  return settings.modelCosts[key];
+}
+
 function addKnownLabel(label) {
   const settings = getSettings();
   if (!settings.knownLabels.includes(label)) {
@@ -70,7 +77,7 @@ function setCredits(value) {
 
 function calcRemaining() {
   const settings = getSettings();
-  const cost = settings.modelCosts[settings.activeModel];
+  const cost = getModelCosts()[settings.activeModel];
   if (!settings.activeModel || !cost || cost <= 0) return null;
   return Math.floor(getCredits() / cost);
 }
@@ -198,11 +205,10 @@ function onModelChanged() {
 
 // ---- Rendering ----
 function renderModelTable() {
-  const settings = getSettings();
   const $tbody = $("#qt-model-table-body");
   if (!$tbody.length) return;
   $tbody.empty();
-  for (const [name, cost] of Object.entries(settings.modelCosts)) {
+  for (const [name, cost] of Object.entries(getModelCosts())) {
     const row = $(`
       <tr>
         <td>${escapeHtml(name)}</td>
@@ -224,7 +230,7 @@ function renderActiveModelBox() {
     return;
   }
 
-  const cost = settings.modelCosts[settings.activeModel];
+  const cost = getModelCosts()[settings.activeModel];
   if (cost === undefined) {
     $box.html(`
       <div>โมเดลปัจจุบัน: <b>${escapeHtml(settings.activeModel)}</b> — ยังไม่ได้ตั้งราคา</div>
@@ -253,7 +259,10 @@ function renderLabelSelect() {
 function updateDisplay() {
   const settings = getSettings();
   renderLabelSelect();
-  $("#qt-credits-input").val(getCredits());
+  const $creditsInput = $("#qt-credits-input");
+  if (!$creditsInput.is(":focus")) {
+    $creditsInput.val(getCredits());
+  }
   $("#qt-autodeduct-checkbox").prop("checked", settings.autoDeduct);
   renderModelTable();
   renderActiveModelBox();
@@ -283,7 +292,7 @@ function flashCredits() {
 
 function deductForOneMessage() {
   const settings = getSettings();
-  const cost = settings.modelCosts[settings.activeModel];
+  const cost = getModelCosts()[settings.activeModel];
   if (!settings.activeModel || !cost || cost <= 0) return;
 
   const newCredits = Math.max(0, getCredits() - cost);
@@ -439,7 +448,7 @@ function bindPanelEvents() {
       return;
     }
     const settings = getSettings();
-    settings.modelCosts[name] = cost;
+    getModelCosts()[name] = cost;
     if (!settings.activeModel) settings.activeModel = name;
     saveSettings();
     $("#qt-new-model-name").val("");
@@ -449,8 +458,7 @@ function bindPanelEvents() {
 
   $(document).off("click", ".qt-delete-model").on("click", ".qt-delete-model", function () {
     const name = $(this).data("model");
-    const settings = getSettings();
-    delete settings.modelCosts[name];
+    delete getModelCosts()[name];
     saveSettings();
     updateDisplay();
   });
@@ -462,7 +470,7 @@ function bindPanelEvents() {
       return;
     }
     const settings = getSettings();
-    settings.modelCosts[settings.activeModel] = cost;
+    getModelCosts()[settings.activeModel] = cost;
     saveSettings();
     updateDisplay();
   });
