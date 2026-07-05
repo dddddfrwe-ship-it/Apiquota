@@ -16,12 +16,31 @@ function getSettings() {
   if (!extension_settings[extensionName]) {
     extension_settings[extensionName] = structuredClone(defaultSettings);
   }
+  const settings = extension_settings[extensionName];
   for (const key of Object.keys(defaultSettings)) {
-    if (extension_settings[extensionName][key] === undefined) {
-      extension_settings[extensionName][key] = structuredClone(defaultSettings[key]);
+    const def = defaultSettings[key];
+    const cur = settings[key];
+    const defIsObject = def !== null && typeof def === "object";
+    const curIsObject = cur !== null && typeof cur === "object";
+    // Repair leftover values from an older version of this extension where
+    // a field had a different shape (e.g. "credits" used to be a plain
+    // number, now it's an object keyed by API label).
+    if (cur === undefined || (defIsObject && !curIsObject)) {
+      settings[key] = structuredClone(def);
     }
   }
-  return extension_settings[extensionName];
+
+  // Repair fields left over from older versions of this extension that used
+  // a different shape (e.g. `credits` used to be a single number instead of
+  // a per-API-label object). Without this, writing to e.g. credits["x"]
+  // throws once the stored value is a primitive instead of an object.
+  const isPlainObject = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
+  if (!isPlainObject(settings.credits)) settings.credits = {};
+  if (!isPlainObject(settings.modelCosts)) settings.modelCosts = {};
+  if (!isPlainObject(settings.creditEvents)) settings.creditEvents = {};
+  if (!Array.isArray(settings.knownLabels)) settings.knownLabels = ["default"];
+
+  return settings;
 }
 
 function saveSettings() {
@@ -436,23 +455,17 @@ function bindPanelEvents() {
   });
 
   $(document).off("click.qt", "#qt-credits-save").on("click.qt", "#qt-credits-save", function () {
-    alert("DEBUG: qt-credits-save clicked, input value = " + $("#qt-credits-input").val());
-    try {
-      const val = parseFloat($("#qt-credits-input").val());
-      if (isNaN(val) || val < 0) {
-        toastr.warning("กรอกจำนวนเครดิตให้ถูกต้องก่อน");
-        return;
-      }
-      setCredits(val);
-      recordCreditEvent("manual", null, val);
-      $("#qt-credits-edit-row").hide();
-      $("#qt-credits-display").show();
-      updateDisplay();
-      alert("DEBUG: save finished OK, credits now = " + getCredits());
-      toastr.success("บันทึกเครดิตแล้ว");
-    } catch (e) {
-      alert("DEBUG ERROR: " + e.message + "\n" + e.stack);
+    const val = parseFloat($("#qt-credits-input").val());
+    if (isNaN(val) || val < 0) {
+      toastr.warning("กรอกจำนวนเครดิตให้ถูกต้องก่อน");
+      return;
     }
+    setCredits(val);
+    recordCreditEvent("manual", null, val);
+    $("#qt-credits-edit-row").hide();
+    $("#qt-credits-display").show();
+    updateDisplay();
+    toastr.success("บันทึกเครดิตแล้ว");
   });
 
   $(document).off("change.qt", "#qt-api-label-select").on("change.qt", "#qt-api-label-select", function () {
