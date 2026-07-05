@@ -343,6 +343,11 @@ function updateDisplay() {
   } else {
     $result.text(`เล่นได้อีกประมาณ ${remaining.toLocaleString()} ข้อความ`);
   }
+
+  const $summary = $("#qt-header-summary");
+  const creditsText = `${getCredits().toLocaleString()} เครดิต`;
+  const remainingText = remaining === null ? "" : ` · เหลือ ${remaining.toLocaleString()} ข้อความ`;
+  $summary.text(`— ${creditsText}${remainingText}`);
 }
 
 function flashCredits() {
@@ -383,7 +388,7 @@ const panelHtml = `
 <div id="quota-tracker-panel" class="quota-tracker-settings">
   <div class="inline-drawer">
     <div class="inline-drawer-toggle inline-drawer-header">
-      <b>Quota Tracker</b>
+      <b>Quota Tracker <span id="qt-header-summary" class="qt-header-summary"></span></b>
       <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
     </div>
     <div class="inline-drawer-content">

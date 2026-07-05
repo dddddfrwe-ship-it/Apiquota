@@ -65,3 +65,8 @@
   border-top: 1px solid var(--SmartThemeBorderColor, #555);
   padding-top: 10px;
 }
+.qt-header-summary {
+  font-size: 0.75em;
+  font-weight: normal;
+  opacity: 0.6;
+}
