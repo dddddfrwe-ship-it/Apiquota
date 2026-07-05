@@ -10,6 +10,7 @@ const defaultSettings = {
   knownLabels: ["default"],
   autoDeduct: true,
   creditEvents: {}, // { apiLabel: { type: 'manual'|'deduct', amount, remaining, time } }
+  labelAliases: {}, // { rawDetectedId: friendlyName }
 };
 
 function getSettings() {
@@ -151,7 +152,8 @@ function findApiKeyInput() {
 // Note: a saved key's real value is hidden by ST, so #1 only works for a
 // key that hasn't been saved yet. Once saved, #2 (the Secrets Manager name)
 // is the reliable source, since ST shows which saved secret is active.
-function detectApiLabel() {
+// Returns the raw, unaliased identity we can detect from the DOM right now.
+function detectRawApiId() {
   const $keyInput = findApiKeyInput();
   if ($keyInput) {
     const keyVal = $keyInput.val();
@@ -179,6 +181,18 @@ function detectApiLabel() {
     return baseUrl ? `${source} · ${baseUrl}` : source;
   }
   return null;
+}
+
+// Resolves a raw detected identity to a friendly label, if the user has
+// renamed it before. Otherwise falls back to the raw identity itself.
+function resolveLabel(rawId) {
+  if (!rawId) return null;
+  const settings = getSettings();
+  return settings.labelAliases[rawId] || rawId;
+}
+
+function detectApiLabel() {
+  return resolveLabel(detectRawApiId());
 }
 
 function syncApiContext() {
@@ -354,22 +368,14 @@ function deductForOneMessage() {
 // ever added, so this handler never runs and credits stay untouched.
 function onMessageReceived(mesId) {
   const settings = getSettings();
-  alert("DEBUG: onMessageReceived fired. mesId=" + mesId + " autoDeduct=" + settings.autoDeduct);
   if (!settings.autoDeduct) return;
   try {
     const context = getContext();
     const message = context.chat[mesId];
-    alert(
-      "DEBUG: message exists=" + !!message +
-      " is_user=" + (message ? message.is_user : "?") +
-      " is_system=" + (message ? message.is_system : "?")
-    );
     if (!message || message.is_user || message.is_system) return;
-    const cost = getModelCosts()[settings.activeModel];
-    alert("DEBUG: apiKey=" + apiKey() + " activeModel=" + settings.activeModel + " cost=" + cost);
     deductForOneMessage();
   } catch (e) {
-    alert("DEBUG ERROR in onMessageReceived: " + e.message);
+    console.error("[QuotaTracker] Error in onMessageReceived", e);
   }
 }
 
@@ -392,7 +398,7 @@ const panelHtml = `
           <input type="text" id="qt-api-label-input" class="text_pole" placeholder="ชื่อ API ใหม่ เช่น gemai-claude" />
           <button id="qt-api-label-save" class="menu_button">เพิ่ม</button>
         </div>
-        <small class="qt-hint">พิมพ์/วางคีย์ใหม่ในช่อง API Key จะเพิ่มเข้ารายการนี้ให้เองอัตโนมัติ ถ้าเป็นคีย์เก่าที่บันทึกไว้แล้ว เลือกจากดรอปดาวน์นี้แทนได้เลย</small>
+        <small class="qt-hint">ตั้งชื่อไว้ที่นี่จะจำผูกกับ API ที่ต่ออยู่ตอนนี้ถาวร ครั้งหน้าที่กลับมาใช้ API เดิมจะขึ้นชื่อนี้ให้เองอัตโนมัติ</small>
       </div>
 
       <div class="qt-section">
@@ -494,10 +500,15 @@ function bindPanelEvents() {
       toastr.warning("กรอกชื่อ API ก่อน");
       return;
     }
+    const raw = detectRawApiId();
+    if (raw) {
+      getSettings().labelAliases[raw] = val;
+      saveSettings();
+    }
     $("#qt-api-new-row").hide();
     lastPolledApiLabel = val;
     switchToLabel(val);
-    toastr.success("เพิ่มแล้ว");
+    toastr.success(raw ? "ตั้งชื่อแล้ว จะจำไว้ให้อัตโนมัติทุกครั้งที่กลับมาใช้ API นี้" : "เพิ่มแล้ว");
   });
 
   $(document).off("click.qt", "#qt-api-label-delete").on("click.qt", "#qt-api-label-delete", function () {
