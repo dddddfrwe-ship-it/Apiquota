@@ -354,14 +354,22 @@ function deductForOneMessage() {
 // ever added, so this handler never runs and credits stay untouched.
 function onMessageReceived(mesId) {
   const settings = getSettings();
+  alert("DEBUG: onMessageReceived fired. mesId=" + mesId + " autoDeduct=" + settings.autoDeduct);
   if (!settings.autoDeduct) return;
   try {
     const context = getContext();
     const message = context.chat[mesId];
+    alert(
+      "DEBUG: message exists=" + !!message +
+      " is_user=" + (message ? message.is_user : "?") +
+      " is_system=" + (message ? message.is_system : "?")
+    );
     if (!message || message.is_user || message.is_system) return;
+    const cost = getModelCosts()[settings.activeModel];
+    alert("DEBUG: apiKey=" + apiKey() + " activeModel=" + settings.activeModel + " cost=" + cost);
     deductForOneMessage();
   } catch (e) {
-    console.error("[QuotaTracker] Error in onMessageReceived", e);
+    alert("DEBUG ERROR in onMessageReceived: " + e.message);
   }
 }
 
