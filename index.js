@@ -7,10 +7,8 @@ const defaultSettings = {
   modelCosts: {},    // { apiLabel: { modelName: costPerMessage } }
   activeModel: "",
   apiLabel: "default",
-  knownLabels: ["default"],
   autoDeduct: true,
   creditEvents: {}, // { apiLabel: { type: 'manual'|'deduct', amount, remaining, time } }
-  labelAliases: {}, // { rawDetectedId: friendlyName }
 };
 
 function getSettings() {
@@ -39,7 +37,6 @@ function getSettings() {
   if (!isPlainObject(settings.credits)) settings.credits = {};
   if (!isPlainObject(settings.modelCosts)) settings.modelCosts = {};
   if (!isPlainObject(settings.creditEvents)) settings.creditEvents = {};
-  if (!Array.isArray(settings.knownLabels)) settings.knownLabels = ["default"];
 
   return settings;
 }
@@ -68,17 +65,9 @@ function getModelCosts() {
   return settings.modelCosts[key];
 }
 
-function addKnownLabel(label) {
+function setApiLabel(label) {
   const settings = getSettings();
-  if (!settings.knownLabels.includes(label)) {
-    settings.knownLabels.push(label);
-    saveSettings();
-  }
-}
-
-function switchToLabel(label) {
-  const settings = getSettings();
-  addKnownLabel(label);
+  if (settings.apiLabel === label) return;
   settings.apiLabel = label;
   saveSettings();
   updateDisplay();
@@ -152,8 +141,15 @@ function findApiKeyInput() {
 // Note: a saved key's real value is hidden by ST, so #1 only works for a
 // key that hasn't been saved yet. Once saved, #2 (the Secrets Manager name)
 // is the reliable source, since ST shows which saved secret is active.
-// Returns the raw, unaliased identity we can detect from the DOM right now.
-function detectRawApiId() {
+// Returns the current API identity, read straight off ST's own UI:
+//   1. A key currently being typed/pasted (last 6 chars, never the full key)
+//   2. The active secret's name from ST's Secrets Manager, read off the key
+//      field's placeholder, e.g. "บันทึก API Key แล้ว (Claude)" -> "Claude"
+//   3. A named Connection Profile
+//   4. Chat completion source + custom base URL
+// Renaming happens in ST's own Secrets Manager / Connection Profile UI —
+// this always just reflects whatever is currently active there.
+function detectApiLabel() {
   const $keyInput = findApiKeyInput();
   if ($keyInput) {
     const keyVal = $keyInput.val();
@@ -183,22 +179,10 @@ function detectRawApiId() {
   return null;
 }
 
-// Resolves a raw detected identity to a friendly label, if the user has
-// renamed it before. Otherwise falls back to the raw identity itself.
-function resolveLabel(rawId) {
-  if (!rawId) return null;
-  const settings = getSettings();
-  return settings.labelAliases[rawId] || rawId;
-}
-
-function detectApiLabel() {
-  return resolveLabel(detectRawApiId());
-}
-
 function syncApiContext() {
   try {
     const detected = detectApiLabel();
-    if (detected) switchToLabel(detected);
+    if (detected) setApiLabel(detected);
   } catch (e) {
     console.error("[QuotaTracker] Error in syncApiContext", e);
   }
@@ -227,7 +211,7 @@ function pollApiLabel() {
     const detected = detectApiLabel();
     if (detected && detected !== lastPolledApiLabel) {
       lastPolledApiLabel = detected;
-      switchToLabel(detected);
+      setApiLabel(detected);
       setTimeout(() => {
         const val = readModelFromDom();
         if (val && getSettings().activeModel !== val) {
@@ -296,18 +280,6 @@ function renderActiveModelBox() {
   }
 }
 
-function renderLabelSelect() {
-  const settings = getSettings();
-  const $select = $("#qt-api-label-select");
-  if (!$select.length) return;
-  $select.empty();
-  for (const label of settings.knownLabels) {
-    const selected = label === apiKey() ? "selected" : "";
-    $select.append(`<option value="${escapeHtml(label)}" ${selected}>${escapeHtml(label)}</option>`);
-  }
-  $select.append(`<option value="__new__">+ เพิ่มชื่อใหม่...</option>`);
-}
-
 function renderCreditsDisplay() {
   $("#qt-credits-value").text(`${getCredits().toLocaleString()} เครดิต`);
 
@@ -324,7 +296,6 @@ function renderCreditsDisplay() {
 
 function updateDisplay() {
   const settings = getSettings();
-  renderLabelSelect();
 
   // Don't touch the credits edit input while it's open/focused, so a
   // background poll/refresh can't wipe an unsaved edit before Save is clicked.
@@ -394,19 +365,6 @@ const panelHtml = `
     <div class="inline-drawer-content">
 
       <div class="qt-section">
-        <label for="qt-api-label-select">API/บัญชีปัจจุบัน</label>
-        <div class="qt-row">
-          <select id="qt-api-label-select" class="text_pole"></select>
-          <button id="qt-api-label-delete" class="menu_button" title="ลบชื่อนี้ออกจากรายการ">ลบ</button>
-        </div>
-        <div id="qt-api-new-row" class="qt-row" style="display:none;">
-          <input type="text" id="qt-api-label-input" class="text_pole" placeholder="ชื่อ API ใหม่ เช่น gemai-claude" />
-          <button id="qt-api-label-save" class="menu_button">เพิ่ม</button>
-        </div>
-        <small class="qt-hint">ตั้งชื่อไว้ที่นี่จะจำผูกกับ API ที่ต่ออยู่ตอนนี้ถาวร ครั้งหน้าที่กลับมาใช้ API เดิมจะขึ้นชื่อนี้ให้เองอัตโนมัติ</small>
-      </div>
-
-      <div class="qt-section">
         <label>เครดิตคงเหลือ (ของ API นี้)</label>
         <div id="qt-credits-display" class="qt-row qt-credits-display">
           <span id="qt-credits-value" class="qt-credits-value"></span>
@@ -422,15 +380,6 @@ const panelHtml = `
 
       <div class="qt-section">
         <div id="qt-active-model-box" class="qt-active-model-box"></div>
-      </div>
-
-      <div class="qt-section">
-        <label>เพิ่ม/แก้ราคาโมเดล (ชื่อ + ค่าใช้จ่ายต่อ 1 ข้อความ)</label>
-        <div class="qt-row">
-          <input type="text" id="qt-new-model-name" class="text_pole" placeholder="ชื่อโมเดล" />
-          <input type="number" id="qt-new-model-cost" class="text_pole" min="0" step="0.0001" placeholder="ค่าใช้จ่าย/ข้อความ" />
-          <button id="qt-add-model" class="menu_button">บันทึก</button>
-        </div>
       </div>
 
       <div class="qt-section">
@@ -485,66 +434,6 @@ function bindPanelEvents() {
     $("#qt-credits-display").show();
     updateDisplay();
     toastr.success("บันทึกเครดิตแล้ว");
-  });
-
-  $(document).off("change.qt", "#qt-api-label-select").on("change.qt", "#qt-api-label-select", function () {
-    const val = $(this).val();
-    if (val === "__new__") {
-      $("#qt-api-new-row").show();
-      $("#qt-api-label-input").val("").trigger("focus");
-      return;
-    }
-    $("#qt-api-new-row").hide();
-    lastPolledApiLabel = val;
-    switchToLabel(val);
-  });
-
-  $(document).off("click.qt", "#qt-api-label-save").on("click.qt", "#qt-api-label-save", function () {
-    const val = $("#qt-api-label-input").val().trim();
-    if (!val) {
-      toastr.warning("กรอกชื่อ API ก่อน");
-      return;
-    }
-    const raw = detectRawApiId();
-    if (raw) {
-      getSettings().labelAliases[raw] = val;
-      saveSettings();
-    }
-    $("#qt-api-new-row").hide();
-    lastPolledApiLabel = val;
-    switchToLabel(val);
-    toastr.success(raw ? "ตั้งชื่อแล้ว จะจำไว้ให้อัตโนมัติทุกครั้งที่กลับมาใช้ API นี้" : "เพิ่มแล้ว");
-  });
-
-  $(document).off("click.qt", "#qt-api-label-delete").on("click.qt", "#qt-api-label-delete", function () {
-    const settings = getSettings();
-    const current = apiKey();
-    if (current === "default") {
-      toastr.warning("ลบชื่อ default ไม่ได้");
-      return;
-    }
-    if (!confirm(`ลบ "${current}" ออกจากรายการ? (เครดิตของชื่อนี้จะหายไปด้วย)`)) return;
-    settings.knownLabels = settings.knownLabels.filter((l) => l !== current);
-    delete settings.credits[current];
-    settings.apiLabel = "default";
-    saveSettings();
-    updateDisplay();
-  });
-
-  $(document).off("click.qt", "#qt-add-model").on("click.qt", "#qt-add-model", function () {
-    const name = $("#qt-new-model-name").val().trim();
-    const cost = parseFloat($("#qt-new-model-cost").val());
-    if (!name || isNaN(cost) || cost < 0) {
-      toastr.warning("กรอกชื่อโมเดลและค่าใช้จ่ายให้ถูกต้องก่อน");
-      return;
-    }
-    const settings = getSettings();
-    getModelCosts()[name] = cost;
-    if (!settings.activeModel) settings.activeModel = name;
-    saveSettings();
-    $("#qt-new-model-name").val("");
-    $("#qt-new-model-cost").val("");
-    updateDisplay();
   });
 
   $(document).off("click.qt", ".qt-delete-model").on("click.qt", ".qt-delete-model", function () {
@@ -618,7 +507,6 @@ jQuery(async () => {
 
     const detectedApi = detectApiLabel();
     if (detectedApi) {
-      addKnownLabel(detectedApi);
       getSettings().apiLabel = detectedApi;
       lastPolledApiLabel = detectedApi;
     }
